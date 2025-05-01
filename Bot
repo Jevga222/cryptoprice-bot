@@ -1,0 +1,92 @@
+import logging
+import requests
+import os
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+# Твои ключи из .env
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CMC_API_KEY = os.getenv("CMC_API_KEY")
+
+# Словарь локализации
+translations = {
+    'en': {
+        'price': "Current price of {symbol}: ${price:.2f}",
+        'not_found': "Coin not found or API error.",
+        'usage': "Usage: /price BTC",
+        'lang_changed': "Language changed to English.",
+        'unsupported': "Unsupported language. Use /lang en or /lang ru."
+    },
+    'ru': {
+        'price': "Текущая цена {symbol}: ${price:.2f}",
+        'not_found': "Монета не найдена или ошибка API.",
+        'usage': "Использование: /price BTC",
+        'lang_changed': "Язык переключен на русский.",
+        'unsupported': "Неподдерживаемый язык. Используйте /lang en или /lang ru."
+    }
+}
+
+# Хранилище языков (в оперативной памяти)
+user_languages = {}
+
+# Получение языка пользователя
+def get_lang(user_id):
+    return user_languages.get(user_id, 'en')
+
+# Получение цены
+def get_price(symbol):
+    url = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest'
+    headers = {'X-CMC_PRO_API_KEY': CMC_API_KEY}
+    params = {'symbol': symbol.upper(), 'convert': 'USD'}
+
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    
+    try:
+        price = data['data'][symbol.upper()]['quote']['USD']['price']
+        return price
+    except Exception:
+        return None
+
+# Команда /price
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_lang(user_id)
+    t = translations[lang]
+
+    if context.args:
+        symbol = context.args[0].upper()
+        price = get_price(symbol)
+        if price:
+            msg = t['price'].format(symbol=symbol, price=price)
+        else:
+            msg = t['not_found']
+    else:
+        msg = t['usage']
+
+    await update.message.reply_text(msg)
+
+# Команда /lang
+async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if context.args and context.args[0].lower() in ['en', 'ru']:
+        lang = context.args[0].lower()
+        user_languages[user_id] = lang
+        msg = translations[lang]['lang_changed']
+    else:
+        lang = get_lang(user_id)
+        msg = translations[lang]['unsupported']
+
+    await update.message.reply_text(msg)
+
+# Запуск
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    app.add_handler(CommandHandler("price", price_command))
+    app.add_handler(CommandHandler("lang", lang_command))
+
+    print("Бот запущен...")
+    app.run_polling()
